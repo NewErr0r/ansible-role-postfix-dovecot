@@ -41,3 +41,8 @@ hostname_server: 'dovecot'
 <pre>
 ansible-playbook -i inventory/hosts playbook.yml
 </pre>
+
+<p>
+    <strong>Шаг 4. </strong> Автоматизация развёртывания приложения "Roundcube" для организации работы с электронной почтой посредством веб-интерфейса: https://github.com/NewErr0r/ansible-role-roundcube.git
+</p>
+
