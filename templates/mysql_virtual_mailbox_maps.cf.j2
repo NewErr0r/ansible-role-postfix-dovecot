@@ -1,0 +1,5 @@
+user = {{ potsfixadmin_database_name }} 
+password = {{ postfixadmin_database_username_password }} 
+hosts = localhost
+dbname = {{ potsfixadmin_database_name }}
+query = SELECT CONCAT(domain,'/',maildir) FROM mailbox WHERE username='%s' AND active = '1'

@@ -1,0 +1,180 @@
+---
+- name: Installing and configuring Postfix | Install Postfix
+  dnf: 
+    name: 
+      - postfix 
+      - postfix-mysql
+    state: latest
+
+- name: Installing and configuring Postfix | Create group 'vmail'
+  group:
+    name: vmail
+    gid: 1024
+    state: present
+
+- name: Installing and configuring Postfix | Create user 'mail' and add group 'vmail'
+  command:
+    cmd: useradd -d /home/mail -g 1024 -u 1024 vmail -m
+    creates: /home/mail
+
+- name: Installing and configuring Postfix | Set as owner 
+  file: 
+    path: /home/mail
+    state: directory
+    recurse: yes
+    owner: vmail
+    group: vmail
+
+- name: Installing and configuring Postfix | Editing the mail server configuration file
+  lineinfile:
+    dest: '/etc/postfix/main.cf'
+    regexp: '{{ item.regexp }}'
+    line: '{{ item.line }}'
+  loop:
+    - { regexp: '^#myorigin =', line: 'myorigin = $mydomain' }
+    - { regexp: '^mydestination =', line: 'mydestination = localhost.$mydomain, localhost, localhost.localdomain' }
+    - { regexp: '^# local_recipient_maps =', line: 'local_recipient_maps = unix:passwd.byname $alias_maps' }
+    - { regexp: '^#mynetworks =', line: 'mynetworks = 127.0.0.0/8' }
+    - { regexp: '^inet_interfaces = localhost', line: 'inet_interfaces = all' }
+    - { regexp: '^inet_protocols = all', line: 'inet_protocols = all' }
+    - { regexp: '^smtpd_tls_cert_file = /etc/pki/tls/certs/postfix.pem', line: 'smtpd_tls_cert_file = /etc/ssl/mail/public.pem' }
+    - { regexp: '^smtpd_tls_key_file = /etc/pki/tls/private/postfix.key', line: 'smtpd_tls_key_file = /etc/ssl/mail/private.key' }
+
+- name: Installing and configuring Postfix | Editing the mail server configuration file
+  lineinfile:
+    dest: '/etc/postfix/main.cf'
+    line: '{{ item }}'
+  loop:
+    - virtual_mailbox_base = /home/mail
+    - virtual_alias_maps = proxy:mysql:/etc/postfix/mysql_virtual_alias_maps.cf
+    - virtual_mailbox_domains = proxy:mysql:/etc/postfix/mysql_virtual_domains_maps.cf
+    - virtual_mailbox_maps = proxy:mysql:/etc/postfix/mysql_virtual_mailbox_maps.cf
+    - virtual_minimum_uid = 1024
+    - virtual_uid_maps = static:1024
+    - virtual_gid_maps = static:1024
+    - virtual_transport = dovecot
+    - dovecot_destination_recipient_limit = 1
+    - smtpd_sasl_auth_enable = yes
+    - smtpd_sasl_exceptions_networks = $mynetworks
+    - smtpd_sasl_security_options = noanonymous
+    - broken_sasl_auth_clients = yes
+    - smtpd_sasl_type = dovecot
+    - smtpd_sasl_path = private/auth
+    - smtp_use_tls = yes
+    - smtpd_use_tls = yes
+    - smtpd_tls_auth_only = yes
+    - smtpd_helo_required = yes
+
+- name: Installing and configuring Postfix | Creating a file with the settings for accessing the database with aliases
+  template: 
+    src: mysql_virtual_alias_maps.cf.j2
+    dest: /etc/postfix/mysql_virtual_alias_maps.cf
+
+- name: Installing and configuring Postfix | Creating a file with instructions for obtaining data on virtual domains
+  template: 
+    src: mysql_virtual_domains_maps.cf.j2
+    dest: /etc/postfix/mysql_virtual_domains_maps.cf
+
+- name: Installing and configuring Postfix | Creating a file with mailboxes
+  template: 
+    src: mysql_virtual_mailbox_maps.cf.j2
+    dest: /etc/postfix/mysql_virtual_mailbox_maps.cf
+
+- name: Installing and configuring Postfix | Confguring master.cf
+  lineinfile:
+    dest: '/etc/postfix/master.cf'
+    line: '{{ item }}'
+  loop:
+    - 'submission   inet  n  -  n  -  -  smtpd'
+    - '  -o smtpd_tls_security_level=may'
+    - '  -o smtpd_sasl_auth_enable=yes'
+    - '  -o smtpd_sasl_type=dovecot'
+    - '  -o smtpd_sasl_path=/var/spool/postfix/private/auth'
+    - '  -o smtpd_sasl_security_options=noanonymous'
+    - '  -o smtpd_sasl_local_domain=$myhostname'
+    - 'smtps   inet  n  -  n  -  -  smtpd'
+    - '  -o syslog_name=postfix/smtps'
+    - '  -o smtpd_tls_wrappermode=yes'
+    - '  -o smtpd_sasl_auth_enable=yes'
+    - '  -o smtpd_client_restrictions=permit_sasl_authenticated,reject'
+    - 'dovecot   unix  -  n  n  -  -  pipe'
+    - '  flags=DRhu user=vmail:vmail argv=/usr/libexec/dovecot/deliver -d ${recipient}'
+
+- name: Installing and configuring Postfix | Create directory for certifications
+  file: 
+    path: /etc/ssl/mail
+    state: directory
+    recurse: yes
+
+- name: Installing and configuring Postfix | Create certificates
+  command: 
+    cmd: openssl req -new -x509 -days 1461 -nodes -out public.pem -keyout private.key -subj "/C=RU/ST=MSK/CN={{ hostname_server }}"
+    chdir: /etc/ssl/mail
+    creates: /etc/ssl/mail/{{ item }}
+  loop: 
+    - public.pem
+    - private.key
+  notify:
+    - Started and Enabled postfix
+
+- name: Setting up Dovecot | Installing Dovecot with a component for working with DB
+  dnf: 
+    name: 
+      - dovecot 
+      - dovecot-mysql
+    state: latest
+
+- name: Setting up Dovecot | Setting up a way to store messages
+  lineinfile:
+    dest: '/etc/dovecot/conf.d/10-mail.conf'
+    regexp: '^#mail_location ='
+    line: 'mail_location = maildir:/home/mail/%d/%u/'
+
+- name: Setting up Dovecot | Setting up a listener for authentication
+  copy:
+    src: 10-master.conf
+    dest: /etc/dovecot/conf.d/10-master.conf
+
+- name: Setting up Dovecot | Setting up authentication in Dovecot
+  lineinfile:
+    dest: '/etc/dovecot/conf.d/10-auth.conf'
+    regexp: '{{ item.regexp }}'
+    line:  '{{ item.line }}'
+  loop:
+    - { regexp: '^!include auth-system.conf.ext', line: '#!include auth-system.conf.ext' }
+    - { regexp: '^#!include auth-sql.conf.ext', line: '!include auth-sql.conf.ext' }
+
+- name: Setting up Dovecot | Setting up the use of encryption
+  lineinfile:
+    dest: '/etc/dovecot/conf.d/10-ssl.conf'
+    regexp: '{{ item.regexp }}'
+    line:  '{{ item.line }}'
+  loop:
+    - { regexp: '^ssl = required', line: 'ssl = required' }
+    - { regexp: '^ssl_cert = </etc/pki/dovecot/certs/dovecot.pem', line: 'ssl_cert = </etc/ssl/mail/public.pem' }
+    - { regexp: '^ssl_key = </etc/pki/dovecot/private/dovecot.pem', line: 'ssl_key = </etc/ssl/mail/private.key' }
+
+- name: Setting up Dovecot | We will set up automatic creation of directories when the user connects to the mailbox for the first time
+  lineinfile:
+    dest: '/etc/dovecot/conf.d/15-lda.conf'
+    regexp: '^#lda_mailbox_autosubscribe = no'
+    line:  'lda_mailbox_autocreate = yes'
+
+- name: Setting up Dovecot | Creating a file with settings for working with mysql
+  copy:
+    dest: /etc/dovecot/dovecot-sql.conf.ext
+    content: | 
+      driver = mysql
+      connect = host=localhost dbname={{ potsfixadmin_database_name }} user={{ postfixadmin_database_username }} password={{ postfixadmin_database_username_password }}
+      default_pass_scheme = MD5-CRYPT
+      password_query = SELECT password FROM mailbox WHERE username = '%u'
+      user_query = SELECT maildir, 1024 AS uid, 1024 AS gid FROM mailbox WHERE username = '%u'
+      user_query = SELECT CONCAT('/home/mail/',LCASE(`domain`),'/',LCASE(`maildir`)), 1024 AS uid, 1024 AS gid FROM mailbox WHERE username = '%u'
+
+- name: Setting up Dovecot | Setting up the interface on which dovecot will listen
+  lineinfile: 
+    dest: '/etc/dovecot/dovecot.conf'
+    regexp: '^#listen = *, ::'
+    line:  'listen = *'
+  notify:
+    - Started and Enabled dovecot

@@ -1,0 +1,12 @@
+---
+- name: Started and Enabled postfix
+  service: 
+    name: postfix 
+    enabled: true 
+    state: started
+
+- name: Started and Enabled dovecot
+  service: 
+    name: dovecot
+    enabled: true 
+    state: started
