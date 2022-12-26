@@ -30,8 +30,7 @@
 #MariaDB
 potsfixadmin_database_name: 'postfix'
 postfixadmin_database_username: 'postfix'
-postfixadmin_database_username_password: 'postfix123'
-<br>
+postfixadmin_database_username_password: 'postfix123'<br>
 #Certificate common name (CN:)
 hostname_server: 'dovecot'
 </pre>
